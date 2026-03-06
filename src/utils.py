@@ -5,6 +5,39 @@ import re
 import logging
 from pathlib import Path
 
+# Flags used to identify test / dummy records (shared by validator and agent)
+DUMMY_FLAGS = ["test", "n/a", "unknown", "dummy", "example"]
+
+
+def normalize_phone(phone: str) -> str:
+    """Normalize a phone number to E.164 format (+[country code][digits]).
+
+    Already-valid E.164 strings (start with + and contain only digits) are
+    returned unchanged.  Otherwise all non-digit characters are stripped and a
+    '+' prefix is added.  Strings that are empty, 'MISSING', or too short to be
+    a real phone number are returned as-is.
+    """
+    if not phone or phone == "MISSING":
+        return phone
+    # Already clean E.164
+    if re.match(r'^\+\d{7,15}$', phone.strip()):
+        return phone.strip()
+    # Strip everything except digits
+    digits = re.sub(r'[^\d]', '', phone)
+    if len(digits) < 7:
+        return phone  # Too short — can't reliably normalize; preserve original
+    return f"+{digits}"
+
+
+def normalize_url(url: str) -> str:
+    """Upgrade http:// to https:// and strip trailing slashes."""
+    if not url or url == "MISSING":
+        return url
+    url = url.strip().rstrip("/")
+    if url.startswith("http://"):
+        url = "https://" + url[7:]
+    return url
+
 
 def load_prompt(name: str) -> str:
     """Load a prompt markdown file by agent name."""

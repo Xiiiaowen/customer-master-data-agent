@@ -11,6 +11,12 @@ Given a raw customer record, clean and standardize customer records while preser
 - Use official registered name with proper capitalization (e.g., "henkel ag & co kgaa" → "Henkel AG & Co. KGaA", "BASF" → "BASF SE")
 - Standardize legal suffixes (LLC, Inc., Ltd., Corp., GmbH, S.A., etc.) — use consistent abbreviations
 - Remove excessive punctuation or special characters
+- **Language standard — always use the official English name** when one is widely established for the company:
+  - 上海浦东发展银行 → "Shanghai Pudong Development Bank"
+  - 华为技术有限公司 → "Huawei Technologies Co., Ltd."
+  - 中国石化 / 中国石油化工集团 → "China Petroleum & Chemical Corporation"
+  - 比亚迪股份有限公司 → "BYD Company Limited"
+  - If no widely-used English name exists, keep the local-language name as-is.
 
 2. **Address**
 - Use proper format with street, house number, postal code
@@ -52,7 +58,7 @@ Given a raw customer record, clean and standardize customer records while preser
 ## Output Format
 
 Return ONLY a valid JSON object for the single cleaned record.
-Preserve all original field names exactly.
+Preserve all original field names exactly, including any fields not listed below.
 Do not include any markdown, or extra text — just the JSON object.
 
 ```json
@@ -65,6 +71,8 @@ Do not include any markdown, or extra text — just the JSON object.
   "industry": "standardized industry",
   "contact_email": "email or MISSING",
   "phone": "phone or MISSING",
+  "website": "https://... URL or empty string if not provided",
+  "registration_id": "preserve as-is from original",
   "confidence": 0.95,
   "changes_made": ["list of changes"]
 }

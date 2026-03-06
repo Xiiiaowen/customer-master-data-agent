@@ -5,6 +5,13 @@ from difflib import SequenceMatcher
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
+try:
+    from .utils import DUMMY_FLAGS
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from src.utils import DUMMY_FLAGS
 
 load_dotenv(override=True)
 
@@ -15,21 +22,46 @@ class DataValidatorAgent:
             temperature=0)
 
     def find_duplicates(self, records: list[dict]) -> list[dict]:
-        """Find potential duplicate records using fuzzy matching + LLM verification."""
+        """Find potential duplicate records using fuzzy matching + LLM verification.
+
+        Two records are sent to the LLM for verification if EITHER:
+        - Their company names have fuzzy similarity > 0.5 (catches abbreviations,
+          minor spelling variations, legal-suffix differences), OR
+        - They share the same non-empty postal_code AND country (catches same-address
+          pairs with different language names, e.g. Chinese vs English, or brand name
+          vs official registered name like Sinopec vs China Petroleum & Chemical Corp).
+        """
         duplicates = []
-        
+        already_checked = set()
+
         for i in range(len(records)):
             for j in range(i + 1, len(records)):
+                if (i, j) in already_checked:
+                    continue
+
                 name_i = records[i].get("company_name", "").lower().strip()
                 name_j = records[j].get("company_name", "").lower().strip()
-                
-                # Quick fuzzy match first (cheap, no API call)
+
+                # Primary signal: name fuzzy similarity
                 similarity = SequenceMatcher(None, name_i, name_j).ratio()
-                
-                if similarity > 0.5:  # Potential match
-                    # Use LLM to verify (more expensive but accurate)
+                name_match = similarity > 0.5
+
+                # Secondary signal: same postal code + country (language-agnostic)
+                postal_i = records[i].get("postal_code", "").strip()
+                postal_j = records[j].get("postal_code", "").strip()
+                country_i = records[i].get("country", "").strip().upper()
+                country_j = records[j].get("country", "").strip().upper()
+                same_location = (
+                    postal_i and postal_i not in ("MISSING", "NaN", "nan")
+                    and postal_i == postal_j
+                    and country_i and country_i not in ("MISSING",)
+                    and country_i == country_j
+                )
+
+                if name_match or same_location:
+                    already_checked.add((i, j))
                     is_duplicate = self._llm_verify_duplicate(records[i], records[j])
-                    
+
                     if is_duplicate:
                         duplicates.append({
                             "record_1": records[i],
@@ -37,7 +69,7 @@ class DataValidatorAgent:
                             "similarity_score": round(similarity, 3),
                             "llm_confirmed": True
                         })
-        
+
         return duplicates
 
     def _llm_verify_duplicate(self, record1: dict, record2: dict) -> bool:
@@ -82,7 +114,7 @@ class DataValidatorAgent:
 
         # Check country code format (must be 2-letter ISO)
         country = record.get("country", "")
-        if country and len(country) != 2:
+        if country and country != "MISSING" and len(country) != 2:
             issues.append(f"Invalid country code: '{country}' (should be 2-letter ISO, e.g. DE, US)")
 
         # Check email format (must have @ and domain with .)
@@ -98,11 +130,11 @@ class DataValidatorAgent:
         if phone and phone != "MISSING" and not phone.startswith("+"):
             issues.append(f"Invalid phone format: '{phone}' (should be E.164, e.g. +4921179700)")
 
-        # Check at least one contact method exists
+        # Warn if no contact method exists (common in B2B records, not a hard error)
         email_missing = not email or email == "MISSING"
         phone_missing = not phone or phone == "MISSING"
         if email_missing and phone_missing:
-            issues.append("No contact method available (both email and phone are missing)")
+            warnings.append("No contact method available (both email and phone are missing)")
 
         # Warn if cleaner confidence score is low
         confidence = record.get("confidence", 1.0)
@@ -111,8 +143,7 @@ class DataValidatorAgent:
 
         # Warn if company name looks like test or dummy data
         company_name = record.get("company_name", "")
-        dummy_flags = ["test", "n/a", "unknown", "dummy", "example"]
-        if any(flag in company_name.lower() for flag in dummy_flags):
+        if any(flag in company_name.lower() for flag in DUMMY_FLAGS):
             warnings.append(f"Possible test/dummy record: '{company_name}'")
 
         return {

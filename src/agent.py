@@ -9,6 +9,7 @@ try:
     from .cleaner import DataCleanerAgent
     from .enricher import DataEnricherAgent
     from .validator import DataValidatorAgent
+    from .utils import DUMMY_FLAGS
 except ImportError:
     # Allow running this file directly: python src/agent.py
     import sys
@@ -16,6 +17,20 @@ except ImportError:
     from src.cleaner import DataCleanerAgent
     from src.enricher import DataEnricherAgent
     from src.validator import DataValidatorAgent
+    from src.utils import DUMMY_FLAGS
+
+
+def _is_test_record(record: dict) -> bool:
+    """Return True if the record should be excluded from the pipeline.
+
+    Covers:
+    - Completely empty / all-MISSING records (company_name is blank or 'MISSING')
+    - Records whose name contains known test/dummy keywords
+    """
+    name = record.get("company_name", "").strip()
+    if not name or name.upper() == "MISSING":
+        return True
+    return any(flag in name.lower() for flag in DUMMY_FLAGS)
 
 
 def _to_record(item) -> Optional[dict]:
@@ -70,6 +85,10 @@ class CustomerMasterDataAgent:
 
         unique = self._remove_duplicates(cleaned, duplicates)
         print(f"   {len(unique)} unique records remaining")
+
+        # Remove test/dummy records
+        unique = [r for r in unique if not _is_test_record(r)]
+        print(f"   {len(unique)} records after removing test/dummy entries")
 
         # Enrich
         print("\n🌐 Step 4: Enriching with web data...")
@@ -179,6 +198,12 @@ def run_pipeline(
 
         cleaned = agent._remove_duplicates(cleaned, duplicates)
         log(f"{len(cleaned)} unique records after deduplication.")
+
+        # Remove test/dummy records
+        before = len(cleaned)
+        cleaned = [r for r in cleaned if not _is_test_record(r)]
+        if len(cleaned) < before:
+            log(f"Removed {before - len(cleaned)} test/dummy record(s).")
 
         cleaned_df = pd.DataFrame(cleaned)
         current = cleaned

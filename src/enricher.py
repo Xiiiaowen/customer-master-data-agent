@@ -9,6 +9,12 @@ from langchain_tavily import TavilySearch
 from dotenv import load_dotenv
 
 from typing import Callable, Optional
+try:
+    from .utils import normalize_phone, normalize_url
+except ImportError:
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from src.utils import normalize_phone, normalize_url
 
 load_dotenv(override=True)
 
@@ -64,14 +70,49 @@ class DataEnricherAgent:
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0]
 
-            enriched = json.loads(content.strip())
-            enriched["original_record"] = record
-            return enriched
-        except (json.JSONDecodeError, IndexError):
-            return {
-                "error": "Failed to parse enrichment response",
-                "original record": record
+            enriched_data = json.loads(content.strip())
+
+            # Start with the original record as the base so all original fields
+            # (company_name, address, contact_email, phone, etc.) are preserved.
+            result = dict(record)
+
+            # Handle legacy field names in case the LLM still uses old format
+            legacy_map = {
+                "verified_name": "company_name",
+                "verified_address": "address",
+                "industry_nace": "industry",
+                "industry_description": "industry",
             }
+            for old_key, new_key in legacy_map.items():
+                if enriched_data.get(old_key) and not result.get(new_key):
+                    result[new_key] = enriched_data.pop(old_key)
+
+            # Core fields: only fill in if currently empty or MISSING
+            core_fields = ["company_name", "address", "city", "postal_code",
+                           "country", "industry", "contact_email", "phone", "website"]
+            for field in core_fields:
+                existing = result.get(field, "")
+                if (not existing or existing == "MISSING") and enriched_data.get(field):
+                    result[field] = enriched_data[field]
+
+            # New enrichment-only fields: always add/update
+            enrichment_fields = ["employees", "revenue_eur", "key_products",
+                                  "data_sources", "enrichment_confidence"]
+            for field in enrichment_fields:
+                if field in enriched_data:
+                    result[field] = enriched_data[field]
+
+            # Normalize phone and website regardless of whether they came from
+            # the original record or were just filled in by the enricher.
+            if result.get("phone"):
+                result["phone"] = normalize_phone(result["phone"])
+            if result.get("website"):
+                result["website"] = normalize_url(result["website"])
+
+            return result
+        except (json.JSONDecodeError, IndexError):
+            # Return original record on failure so the pipeline can continue
+            return dict(record)
         
     def enrich_batch(self, records: list[dict]) -> list[dict]:
         """Enrich a batch of records."""
