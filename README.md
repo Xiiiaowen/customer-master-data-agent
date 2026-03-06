@@ -50,7 +50,7 @@ TAVILY_API_KEY=tvly-...
 streamlit run app.py
 ```
 
-Open <http://localhost:8501> in your browser.
+Open <http://localhost:8501> in your browser, or try the [live demo](https://customer-master-data-agent-3nyfjemy6tnrpfhtqvnz7u.streamlit.app/).
 
 ### 4. (Optional) Run from the command line
 
