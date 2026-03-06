@@ -18,8 +18,9 @@ load_dotenv(override=True)
 class DataValidatorAgent:
     def __init__(self):
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini", 
+            model="gpt-4o-mini",
             temperature=0)
+        self.llm_calls = 0
 
     def find_duplicates(self, records: list[dict]) -> list[dict]:
         """Find potential duplicate records using fuzzy matching + LLM verification.
@@ -89,6 +90,7 @@ class DataValidatorAgent:
             "record1": json.dumps(record1, ensure_ascii=False),
             "record2": json.dumps(record2, ensure_ascii=False)
         })
+        self.llm_calls += 1
         
         try:
             content = response.content

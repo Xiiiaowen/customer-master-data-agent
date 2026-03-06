@@ -11,10 +11,12 @@ from dotenv import load_dotenv
 from typing import Callable, Optional
 try:
     from .utils import normalize_phone, normalize_url
+    from . import cache as enrichment_cache
 except ImportError:
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from src.utils import normalize_phone, normalize_url
+    from src import cache as enrichment_cache
 
 load_dotenv(override=True)
 
@@ -27,6 +29,9 @@ class DataEnricherAgent:
         )
         self.search_tool = TavilySearch(max_results=3)
         self.prompt_template = self._load_prompt()
+        self.llm_calls = 0
+        self.search_calls = 0
+        self.cache_hits = 0
 
     def _load_prompt(self):
         prompt_path = Path(__file__).parent.parent / "prompts" / "enricher_prompt.md"
@@ -42,6 +47,7 @@ class DataEnricherAgent:
         """Search the web for company information."""
         try:
             results = self.search_tool.invoke(f"{company_name} company headquarters address industry")
+            self.search_calls += 1
             return json.dumps(results, ensure_ascii=False, indent=2)
         except Exception as e:
             return f"Search Failed: {str(e)}"
@@ -49,6 +55,20 @@ class DataEnricherAgent:
     def enrich_record(self, record: dict) -> dict:
         """Enrich a single customer record with web data."""
         company_name = record.get("company_name", "")
+
+        # Check cache first — skip API calls if we already have this company
+        cached = enrichment_cache.get(company_name)
+        if cached:
+            self.cache_hits += 1
+            print(f"[Cache] HIT for: {company_name}")
+            result = dict(record)
+            for field in ["industry", "website", "city", "postal_code", "country",
+                          "contact_email", "phone", "employees", "revenue_eur",
+                          "key_products", "data_sources", "enrichment_confidence"]:
+                existing = result.get(field, "")
+                if (not existing or existing == "MISSING") and cached.get(field):
+                    result[field] = cached[field]
+            return result
 
         # Step 1: Search the Web
         print(f"[Search] Searching for: {company_name}")
@@ -62,6 +82,7 @@ class DataEnricherAgent:
             "existing_data": json.dumps(record, ensure_ascii=False),
             "search_results": search_results
         })
+        self.llm_calls += 1
 
         try:
             content = response.content
@@ -108,6 +129,15 @@ class DataEnricherAgent:
                 result["phone"] = normalize_phone(result["phone"])
             if result.get("website"):
                 result["website"] = normalize_url(result["website"])
+
+            # Save enrichment-only fields to cache for future runs
+            enrichment_cache.put(company_name, {
+                k: result.get(k) for k in
+                ["industry", "website", "city", "postal_code", "country",
+                 "contact_email", "phone", "employees", "revenue_eur",
+                 "key_products", "data_sources", "enrichment_confidence"]
+                if result.get(k)
+            })
 
             return result
         except (json.JSONDecodeError, IndexError):

@@ -17,6 +17,7 @@ class DataCleanerAgent:
             temperature=0
         )
         self.prompt_template = self._load_template()
+        self.llm_calls = 0
 
     def _load_template(self):
         prompt_path = Path(__file__).parent.parent / "prompts" / "cleaner_prompt.md"
@@ -36,6 +37,7 @@ class DataCleanerAgent:
         response = chain.invoke({
             "record": json.dumps(record, ensure_ascii=False)
         })
+        self.llm_calls += 1
 
         try:
             # Extract JSON from response
