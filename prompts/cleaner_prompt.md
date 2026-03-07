@@ -73,7 +73,6 @@ Do not include any markdown, or extra text — just the JSON object.
   "phone": "phone or MISSING",
   "website": "https://... URL or empty string if not provided",
   "registration_id": "preserve as-is from original",
-  "confidence": 0.95,
   "changes_made": ["list of changes"]
 }
 ```

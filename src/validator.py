@@ -138,11 +138,6 @@ class DataValidatorAgent:
         if email_missing and phone_missing:
             warnings.append("No contact method available (both email and phone are missing)")
 
-        # Warn if cleaner confidence score is low
-        confidence = record.get("confidence", 1.0)
-        if isinstance(confidence, (int, float)) and confidence < 0.6:
-            warnings.append(f"Low cleaner confidence: {confidence} (data may be unreliable)")
-
         # Warn if company name looks like test or dummy data
         company_name = record.get("company_name", "")
         if any(flag in company_name.lower() for flag in DUMMY_FLAGS):

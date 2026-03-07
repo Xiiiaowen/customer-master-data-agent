@@ -81,7 +81,9 @@ customer-master-data-agent/
 │   ├── cleaner.py              # Data cleaning (GPT-4o-mini)
 │   ├── enricher.py             # Web-search enrichment (Tavily + GPT-4o-mini)
 │   ├── validator.py            # Data quality validation & deduplication
+│   ├── cache.py                # File-based enrichment cache
 │   └── utils.py                # Shared helpers (phone/URL normalizers, flags)
+├── cache/                      # Enrichment cache (auto-generated, gitignored)
 └── output/                     # Processed CSVs saved here (gitignored)
 ```
 
@@ -109,10 +111,14 @@ print(results["validation_report"])
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `phase` | `str` | `"done"` on completion; `"review_duplicates"` if the pipeline paused for user input |
 | `cleaned_df` | `DataFrame \| None` | Records after cleaning & deduplication |
 | `enriched_df` | `DataFrame \| None` | Records after web enrichment |
 | `validation_report` | `dict \| None` | Quality scores and per-record issues |
-| `final_df` | `DataFrame` | Final output (always present) |
+| `final_df` | `DataFrame` | Final output (always present on `"done"`) |
+| `original_df` | `DataFrame` | Raw input before any processing (for diff comparison) |
+| `record_changes` | `list` | Per-record field-level diffs (before → after from cleaning) |
+| `cost_summary` | `dict` | LLM call counts, web searches, cache hits, estimated USD cost |
 
 ---
 
@@ -129,8 +135,47 @@ print(results["validation_report"])
 ## Cost Tips
 
 - **Clean + Validate only** — fast and cheap, no web calls.
-- **Enrich** makes one Tavily search per record; use the *Max records to enrich* slider in the dashboard sidebar to cap spend during testing.
-- Full pipeline on 53 records costs roughly **$0.10–0.20** in API credits.
+- **Enrich** makes one Tavily search + one GPT call per record on the first run. Repeat runs reuse the cache and cost nothing for already-processed companies.
+- Use the *Max records to enrich* slider in the dashboard sidebar to cap spend during testing.
+- First full pipeline run on 53 records costs roughly **$0.10–0.20** in API credits. Subsequent runs on the same dataset are near-zero for enrichment.
+
+---
+
+## What Changed in V2
+
+V1 was a working prototype — clean, enrich, validate, done. V2 adds a few practical improvements that make it more useful for repeated, real-world use.
+
+### Enrichment cache
+
+The biggest day-to-day change. Enrichment results are now saved to `cache/enrichment_cache.json` after the first run. On subsequent runs, any company that's already been enriched skips the Tavily search and GPT call entirely — so you only pay API costs for genuinely new records.
+
+**Side effect to be aware of:** The cache never expires on its own. If a company moves headquarters, gets acquired, or changes industry, the cached data stays stale until you delete the file. For most personal use this is fine — company facts don't change often. But if you're using this after a major corporate event (merger, rebranding), wipe `cache/enrichment_cache.json` and re-run.
+
+### Duplicate review UI
+
+Instead of auto-deleting one record from each detected duplicate pair, the pipeline now pauses and shows you both records side-by-side so you can decide: keep record 1, keep record 2, or keep both (if the agent was wrong and they're actually different companies).
+
+**Side effect:** If your dataset has many duplicates, this adds a manual step before the pipeline continues. It's intentional — automatic silent deletion was the bigger risk — but worth knowing if you're processing a large file and want it to run unattended.
+
+### Multi-format file upload
+
+The upload now accepts CSV, Excel (`.xlsx` / `.xls`), and JSON in addition to CSV. Column names are also auto-mapped, so common variants like `email`, `CompanyName`, or `telephone` are silently renamed to what the pipeline expects.
+
+**Side effect:** The auto-mapping is best-effort. If your column names are ambiguous or unusual, it may map the wrong column. Check the "Auto-mapped columns" info banner after uploading to confirm the mapping looks right before running.
+
+### What-changed diff view
+
+After cleaning, the Cleaned tab now shows a before/after diff for every field the cleaner modified. This makes it easy to catch cases where the LLM "corrected" something it shouldn't have.
+
+**Side effect:** The diff compares records by position (first record in → first record out), so if the cleaner fails to parse a record and returns nothing, the diff alignment for subsequent records shifts. In practice this is rare, but a garbled diff on a specific record is usually a sign the cleaner had trouble with it.
+
+### Cost tracking
+
+Each run now shows LLM call counts, web searches, cache hits, and an estimated USD cost at the bottom of the results page. The estimate is based on average token counts per call type — actual cost may be slightly higher or lower depending on how verbose the LLM is for a given record.
+
+### Removed: cleaner confidence score
+
+V1 asked the LLM to output a `confidence` field alongside each cleaned record. In practice it almost always returned 0.90–0.95 regardless of how uncertain the cleaning actually was, so it wasn't meaningful. The field has been removed from the cleaner output and the validator no longer checks it. The enricher's `enrichment_confidence` field is kept — there the LLM is judging the quality of its web search results, which is a more grounded assessment.
 
 ---
 
@@ -159,19 +204,19 @@ Similarly, enrichment runs one record at a time. 100 records at ~4 seconds each 
 
 ### No incremental processing
 
-Every run re-processes the full dataset from scratch. If you add 10 new rows to a 10,000-row file, everything gets enriched again. You need a way to track which records are new or changed so you only do expensive API calls on what actually needs it.
+Every run re-processes the full dataset from scratch for cleaning and validation. The enrichment cache (added in V2) helps — already-enriched companies are skipped — but cleaning and validation still run on every record every time. A proper solution would track which records are new or changed and skip unchanged ones entirely.
 
 ### The duplicate merge is too simple
 
-Right now when two records are confirmed duplicates, we keep whichever one has more fields filled. That's not how it should work — ideally you build a **golden record** that takes the best field from each source (email from CRM, address from ERP, phone from a third source). This requires a survivorship ruleset, not just "pick the longer one."
+V2 added a human review step where you choose which record to keep per duplicate pair. That's better than the V1 auto-delete, but it's still not a true golden record merge. Ideally you'd take the best field from each source (email from CRM, address from ERP, phone from a third source) rather than picking one record wholesale and discarding the other entirely.
 
 ### No audit trail
 
 There's no record of what changed and why. If someone asks "why does this company's country show DE when we originally had Germany?", there's no answer. Enterprise data teams need full lineage — who changed what, when, and with what confidence — especially in regulated industries.
 
-### No human review step
+### No human review step (partially addressed in V2)
 
-The agent applies LLM decisions automatically, including duplicate merges. A high-confidence match is probably fine, but borderline ones can silently destroy data. Production MDM typically routes low-confidence decisions to a stewardship queue for a human to approve before committing.
+Duplicate merges now require manual review in the UI before the pipeline continues. But other LLM decisions — field cleaning, enrichment values — are still applied automatically. Production MDM would route any low-confidence change to a stewardship queue, not just duplicates.
 
 ### No persistence layer
 
