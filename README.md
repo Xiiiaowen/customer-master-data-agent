@@ -151,6 +151,8 @@ The biggest day-to-day change. Enrichment results are now saved to `cache/enrich
 
 **Side effect to be aware of:** The cache never expires on its own. If a company moves headquarters, gets acquired, or changes industry, the cached data stays stale until you delete the file. For most personal use this is fine — company facts don't change often. But if you're using this after a major corporate event (merger, rebranding), wipe `cache/enrichment_cache.json` and re-run.
 
+**On Streamlit Cloud:** The cache only persists within the same server session. Streamlit Cloud has an ephemeral filesystem that resets on every redeploy and after the app sleeps due to inactivity (free tier sleeps after ~10 minutes idle). So the cache saves API calls if you run the pipeline multiple times in one sitting, but is lost when the server restarts. For full persistent caching, run the app locally.
+
 ### Duplicate review UI
 
 Instead of auto-deleting one record from each detected duplicate pair, the pipeline now pauses and shows you both records side-by-side so you can decide: keep record 1, keep record 2, or keep both (if the agent was wrong and they're actually different companies).
